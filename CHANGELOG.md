@@ -1,6 +1,11 @@
 # Changelog
 All notable changes to Emukit will be documented in this file.
 
+## [Unreleased]
+- Add `RepeatPointUpdater` and configurable point identifiers (`ExactPointIdentifier`, `FunctionPointIdentifier`) that aggregate repeated noisy measurements at the same experimental point into sample means, unbiased sample variances and per-point mean variances (`s^2 / n`), retaining the raw measurements in `LoopState`. Points with fewer than two measurements use a declared noise prior.
+- Add `IModelWithPerPointNoise` interface for models accepting per-point observation noise variances.
+- Add `HeteroscedasticGaussianProcessModel` (pure numpy) and `GPyHeteroscedasticModelWrapper` / `create_heteroscedastic_gpy_model` (GPy) models that train on aggregated means with their true mean uncertainty as per-point noise.
+
 ## [0.5.1]
 - Use scipy for model free designs (#483)
 - Fix division by 0 warning (#481)

@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -107,5 +107,26 @@ class IModelWithNoise:
 
         :param X: array of shape (n_points x n_inputs) of points to run prediction for
         :return: Tuple of mean and variance which are 2d arrays of shape (n_points x n_outputs)
+        """
+        raise NotImplementedError
+
+
+class IModelWithPerPointNoise(IModel):
+    """
+    Interface for models that accept a different observation noise variance for every training point.
+
+    This is needed when repeated noisy measurements taken at the same input are aggregated into a
+    single mean observation: the variance of that mean depends on the number of repeats and therefore
+    differs between training points.
+    """
+
+    def set_data(self, X: np.ndarray, Y: np.ndarray, noise_variance: np.ndarray) -> None:
+        """
+        Sets training data in the model together with per-point observation noise variances.
+
+        :param X: new points, shape (n_points x n_inputs)
+        :param Y: observed (e.g. aggregated mean) values at X, shape (n_points x n_outputs)
+        :param noise_variance: observation noise variance of each entry of Y, shape
+                               (n_points x n_outputs). Must contain strictly positive values.
         """
         raise NotImplementedError

@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -10,16 +10,268 @@ import importlib
 
 if importlib.util.find_spec("GPy") is None:  # pragma: no cover
 	raise ImportError(
-		"GPy is not installed. Install optional dependency with 'pip install emukit[gpy]' to use gpy_model_wrappers." 
+		"GPy is not installed. Install optional dependency with 'pip install emukit[gpy]' to use gpy_model_wrappers."
 	)
 from typing import Optional, Tuple
 
 import GPy  # noqa: F401
 import numpy as np
+from GPy.inference.latent_function_inference import ExactGaussianInference
 
 from ..bayesian_optimization.interfaces import IEntropySearchModel
-from ..core.interfaces import IDifferentiable, IJointlyDifferentiable, IModel, IModelWithNoise, IPriorHyperparameters
+from ..core.interfaces import (
+    IDifferentiable,
+    IJointlyDifferentiable,
+    IModel,
+    IModelWithNoise,
+    IModelWithPerPointNoise,
+    IPriorHyperparameters,
+)
 from ..experimental_design.interfaces import ICalculateVarianceReduction
+
+
+class _HeteroscedasticExactGaussianInference(ExactGaussianInference):
+	"""
+	Exact Gaussian inference that takes a per-point observation noise variance from
+	``Y_metadata["noise"]`` instead of the single scalar likelihood variance.
+
+	The marginal likelihood and posterior are therefore those of a Gaussian process with a diagonal,
+	heteroscedastic noise covariance whose entries are known (e.g. estimated from repeat
+	measurements).
+	"""
+
+	def inference(
+		self,
+		kern,
+		X,
+		likelihood,
+		Y,
+		mean_function=None,
+		Y_metadata=None,
+		K=None,
+		variance=None,
+		Z_tilde=None,
+	):
+		"""
+		:raises ValueError: If no per-point noise variance is supplied through ``Y_metadata``
+		"""
+		if Y_metadata is None or "noise" not in Y_metadata:
+			raise ValueError(
+				"Heteroscedastic inference requires per-point noise variances in Y_metadata['noise']"
+			)
+		noise_variance = np.asarray(Y_metadata["noise"], dtype=float)
+		return super().inference(
+			kern,
+			X,
+			likelihood,
+			Y,
+			mean_function=mean_function,
+			Y_metadata=Y_metadata,
+			K=K,
+			variance=noise_variance,
+			Z_tilde=Z_tilde,
+		)
+
+
+def create_heteroscedastic_gpy_model(
+	X: np.ndarray,
+	Y: np.ndarray,
+	noise_variance: np.ndarray,
+	kernel: "GPy.kern.Kern" = None,
+	n_restarts: int = 1,
+) -> "GPyHeteroscedasticModelWrapper":
+	"""
+    Creates a GPy Gaussian process with a known, per-point observation noise variance and wraps it in
+    :class:`GPyHeteroscedasticModelWrapper`.
+
+    The likelihood variance is fixed because the observation noise is assumed known (for example,
+    estimated as the variance of the sample mean of repeat measurements); only the kernel
+    hyper-parameters are optimized.
+
+    :param X: Training inputs of shape (n_points x n_input_dims)
+    :param Y: Training targets of shape (n_points x 1)
+    :param noise_variance: Per-point observation noise variances of shape (n_points x 1)
+    :param kernel: GPy kernel. Defaults to an RBF kernel matching the input dimensionality of ``X``
+    :param n_restarts: Number of restarts during kernel hyper-parameter optimization
+    :return: Wrapped heteroscedastic GPy model
+    """
+	noise_variance = np.asarray(noise_variance, dtype=float)
+	if Y.ndim != 2 or Y.shape[1] != 1:
+		raise ValueError(
+			"This Gaussian process supports a single output only, so Y must have shape "
+			"(n_points, 1), got {}".format(Y.shape)
+		)
+	if np.any(noise_variance <= 0):
+		raise ValueError("All observation noise variances must be strictly positive")
+	if noise_variance.shape != Y.shape:
+		raise ValueError(
+			"noise_variance must have the same shape as Y, got {} and {}".format(
+				noise_variance.shape, Y.shape
+			)
+		)
+
+	if kernel is None:
+		kernel = GPy.kern.RBF(input_dim=X.shape[1])
+
+	# The scalar likelihood variance is fixed and unused: the custom inference method injects the
+	# per-point variances. It is initialized to the mean noise variance for numerical scaling.
+	likelihood = GPy.likelihoods.Gaussian(variance=float(np.mean(noise_variance)))
+	likelihood.variance.constrain_fixed()
+
+	gpy_model = GPy.core.GP(
+		X,
+		Y,
+		kernel=kernel,
+		likelihood=likelihood,
+		inference_method=_HeteroscedasticExactGaussianInference(),
+		Y_metadata={"noise": noise_variance},
+	)
+	return GPyHeteroscedasticModelWrapper(gpy_model, n_restarts)
+
+
+class GPyHeteroscedasticModelWrapper(
+    IModelWithPerPointNoise,
+    IModelWithNoise,
+    IDifferentiable,
+    IPriorHyperparameters,
+):
+    """
+    Wraps a GPy model whose observation noise variance is known and differs between training points.
+
+    Use :func:`create_heteroscedastic_gpy_model` to construct a model with the matching inference
+    method. The per-point noise variances are typically the variances of aggregated means of repeat
+    noisy measurements. Predictions made at a training input include that point's observation noise;
+    predictions at any other location are noise-free apart from the latent posterior variance.
+    """
+
+    def __init__(self, gpy_model: GPy.core.GP, n_restarts: int = 1):
+        """
+        :param gpy_model: Heteroscedastic GPy model created by
+                          :func:`create_heteroscedastic_gpy_model`
+        :param n_restarts: Number of restarts during kernel hyper-parameter optimization
+        """
+        self.model = gpy_model
+        self.n_restarts = n_restarts
+
+    @property
+    def noise_variance(self) -> np.ndarray:
+        """
+        :return: Per-point observation noise variances of shape (n_points x 1)
+        """
+        return np.asarray(self.model.Y_metadata["noise"], dtype=float)
+
+    def set_data(self, X: np.ndarray, Y: np.ndarray, noise_variance: np.ndarray) -> None:
+        """
+        Sets training data and per-point observation noise in the model.
+
+        :param X: New training features of shape (n_points x n_input_dims)
+        :param Y: New training targets of shape (n_points x 1)
+        :param noise_variance: Per-point observation noise variances of shape (n_points x 1)
+        """
+        noise_variance = np.asarray(noise_variance, dtype=float)
+        if Y.ndim != 2 or Y.shape[1] != 1:
+            raise ValueError(
+                "This Gaussian process supports a single output only, so Y must have shape "
+                "(n_points, 1), got {}".format(Y.shape)
+            )
+        if np.any(noise_variance <= 0):
+            raise ValueError("All observation noise variances must be strictly positive")
+        if noise_variance.shape != Y.shape:
+            raise ValueError(
+                "noise_variance must have the same shape as Y, got {} and {}".format(
+                    noise_variance.shape, Y.shape
+                )
+            )
+        # Setting Y_metadata before set_XY ensures the posterior is rebuilt with the new noise.
+        self.model.Y_metadata = {"noise": noise_variance}
+        self.model.set_XY(X, Y)
+
+    def optimize(self, verbose: bool = False) -> None:
+        """
+        Optimize the kernel hyper-parameters. The per-point observation noise is kept fixed.
+        """
+        self.model.optimize_restarts(self.n_restarts, verbose=verbose, robust=True)
+
+    def predict(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Predict mean and variance at X. At locations that coincide with training points the
+        corresponding per-point observation noise is added to the predictive variance.
+
+        :param X: (n_points x n_dimensions) array containing locations at which to get predictions
+        :return: (mean, variance) Arrays of size n_points x 1 of the predictive distribution at each
+                 input location
+        """
+        mean, latent_variance = self.predict_noiseless(X)
+        return mean, latent_variance + self._noise_at(X)
+
+    def predict_noiseless(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Predict the latent function mean and variance without observation noise.
+
+        :param X: (n_points x n_dimensions) array containing locations at which to get predictions
+        :return: (mean, variance) Arrays of size n_points x 1 of the noise-free predictive
+                 distribution at each input location
+        """
+        return self.model.predict(X, include_likelihood=False)
+
+    def _noise_at(self, X: np.ndarray) -> np.ndarray:
+        """
+        Returns the observation noise variance associated with each prediction location. Training
+        points carry their declared per-point noise; any other location has no observation noise.
+
+        :param X: (n_points x n_dimensions) array of prediction locations
+        :return: (n_points x 1) array of observation noise variances
+        """
+        noise = np.zeros((X.shape[0], 1))
+        training_X = self.model.X
+        for i, candidate in enumerate(X):
+            matches = np.where(np.all(training_X == candidate, axis=1))[0]
+            if matches.size > 0:
+                noise[i, 0] = self.noise_variance[matches[0], 0]
+        return noise
+
+    def get_prediction_gradients(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        :param X: points at which to compute gradients of the latent predictions
+        :return: (mean gradient, variance gradient) n_points x n_dimensions arrays of the gradients
+                 of the noise-free predictive distribution at each input location
+        """
+        d_mean_dx, d_variance_dx = self.model.predictive_gradients(X)
+        return d_mean_dx[:, :, 0], d_variance_dx
+
+    @property
+    def X(self) -> np.ndarray:
+        return self.model.X
+
+    @property
+    def Y(self) -> np.ndarray:
+        return self.model.Y
+
+    def generate_hyperparameters_samples(
+        self, n_samples=20, n_burnin=100, subsample_interval=10, step_size=1e-1, leapfrog_steps=20
+    ) -> np.ndarray:
+        """
+        Generates samples from the kernel hyper-parameters while keeping the observation noise fixed.
+        See :meth:`GPyModelWrapper.generate_hyperparameters_samples` for parameter descriptions.
+        """
+        self.model.optimize(max_iters=self.n_restarts)
+        unfixed_params = [param for param in self.model.flattened_parameters if not param.is_fixed]
+        for param in unfixed_params:
+            param *= np.random.lognormal(np.log(1.0 / np.sqrt(1.0001)), np.sqrt(np.log(1.0001)), size=param.size)
+        hmc = GPy.inference.mcmc.HMC(self.model, stepsize=step_size)
+        samples = hmc.sample(num_samples=n_burnin + n_samples * subsample_interval, hmc_iters=leapfrog_steps)
+        return samples[n_burnin::subsample_interval]
+
+    def fix_model_hyperparameters(self, sample_hyperparameters: np.ndarray) -> None:
+        """
+        Fix model hyperparameters
+
+        """
+        if self.model._fixes_ is None:
+            self.model[:] = sample_hyperparameters
+        else:
+            self.model[self.model._fixes_] = sample_hyperparameters
+        self.model._trigger_params_changed()
 
 
 class GPyModelWrapper(

@@ -24,6 +24,11 @@ Submodules
     :undoc-members:
     :show-inheritance:
 
+.. automodule:: emukit.core.loop.repeat_point_updater
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 .. automodule:: emukit.core.loop.stopping_conditions
     :members:
     :undoc-members:
