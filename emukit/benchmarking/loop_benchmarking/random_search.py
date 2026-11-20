@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -33,7 +33,10 @@ class RandomSearch(OuterLoop):
         candidate_point_calculator = RandomSampling(parameter_space=space)
 
         if x_init is not None and y_init is not None:
-            loop_state = create_loop_state(x_init, y_init, cost=cost_init)
+            if cost_init is None:
+                loop_state = create_loop_state(x_init, y_init)
+            else:
+                loop_state = create_loop_state(x_init, y_init, cost=cost_init)
         else:
             loop_state = None
 

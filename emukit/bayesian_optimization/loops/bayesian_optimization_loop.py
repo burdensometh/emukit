@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -82,6 +82,6 @@ class BayesianOptimizationResults:
         :param loop_state: The loop state it its current form. Currently it only contains X and Y.
         """
 
-        self.minimum_location = loop_state.X[np.argmin(loop_state.Y), :]
-        self.minimum_value = np.min(loop_state.Y)
-        self.best_found_value_per_iteration = np.minimum.accumulate(loop_state.Y).flatten()
+        self.minimum_location = loop_state.X_for("Y")[np.argmin(loop_state.Y_for("Y")), :]
+        self.minimum_value = np.min(loop_state.Y_for("Y"))
+        self.best_found_value_per_iteration = np.minimum.accumulate(loop_state.Y_for("Y")).flatten()

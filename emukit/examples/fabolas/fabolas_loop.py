@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -13,7 +13,7 @@ from emukit.bayesian_optimization.loops.cost_sensitive_bayesian_optimization_loo
 from emukit.core import ContinuousParameter, ParameterSpace
 from emukit.core.acquisition import IntegratedHyperParameterAcquisition, acquisition_per_expected_cost
 from emukit.core.loop import FixedIntervalUpdater, SequentialPointCalculator
-from emukit.core.loop.loop_state import create_loop_state
+from emukit.core.loop.loop_state import create_loop_state_from_output_data
 from emukit.core.optimization import RandomSearchAcquisitionOptimizer
 from emukit.examples.fabolas.continuous_fidelity_entropy_search import ContinuousFidelityEntropySearch
 from emukit.examples.fabolas.fabolas_model import FabolasModel
@@ -69,13 +69,15 @@ class FabolasLoop(CostSensitiveBayesianOptimizationLoop):
 
         acquisition = acquisition_per_expected_cost(entropy_search, model_cost)
 
-        model_updater_objective = FixedIntervalUpdater(model_objective, update_interval)
-        model_updater_cost = FixedIntervalUpdater(model_cost, update_interval, lambda state: state.cost)
+        model_updater_objective = FixedIntervalUpdater(model_objective, update_interval, output_name="Y")
+        model_updater_cost = FixedIntervalUpdater(model_cost, update_interval, output_name="cost")
 
         acquisition_optimizer = RandomSearchAcquisitionOptimizer(extended_space, num_eval_points=num_eval_points)
         candidate_point_calculator = SequentialPointCalculator(acquisition, acquisition_optimizer)
 
-        loop_state = create_loop_state(model_objective.X, model_objective.Y, cost=model_cost.Y)
+        loop_state = create_loop_state_from_output_data(
+            {"Y": (model_objective.X, model_objective.Y), "cost": (model_cost.X, model_cost.Y)}
+        )
 
         super(CostSensitiveBayesianOptimizationLoop, self).__init__(
             candidate_point_calculator, [model_updater_objective, model_updater_cost], loop_state

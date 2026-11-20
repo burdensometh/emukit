@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -10,7 +10,13 @@ from .candidate_point_calculators import (  # noqa: F401
     RandomSampling,
     SequentialPointCalculator,
 )
-from .loop_state import LoopState  # noqa: F401
+from .loop_state import (  # noqa: F401
+    OBJECTIVE_OUTPUT_NAME,
+    LoopState,
+    OutputView,
+    create_loop_state,
+    create_loop_state_from_output_data,
+)
 from .model_updaters import FixedIntervalUpdater, ModelUpdater  # noqa: F401
 from .outer_loop import OuterLoop  # noqa: F401
 from .stopping_conditions import (  # noqa: F401

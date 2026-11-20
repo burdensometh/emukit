@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -7,13 +7,11 @@
 
 from typing import Union
 
-import numpy as np
-
 from ...bayesian_optimization.acquisitions import ExpectedImprovement, ProbabilityOfFeasibility
 from ...core.acquisition import Acquisition
 from ...core.interfaces import IDifferentiable, IModel
 from ...core.loop import FixedIntervalUpdater, OuterLoop, SequentialPointCalculator
-from ...core.loop.loop_state import create_loop_state
+from ...core.loop.loop_state import create_loop_state_from_output_data
 from ...core.optimization import AcquisitionOptimizerBase, GradientAcquisitionOptimizer
 from ...core.parameter_space import ParameterSpace
 from ..acquisitions.log_acquisition import LogAcquisition
@@ -60,11 +58,6 @@ class UnknownConstraintBayesianOptimizationLoop(OuterLoop):
         :param batch_size: How many points to evaluate in one iteration of the optimization loop. Defaults to 1.
         """
 
-        if not np.all(np.isclose(model_objective.X, model_constraint.X)):
-            raise ValueError(
-                "Emukit currently only supports identical " "training inputs for the constrained and objective model"
-            )
-
         if acquisition is None:
             acquisition = ExpectedImprovement(model_objective)
 
@@ -72,10 +65,8 @@ class UnknownConstraintBayesianOptimizationLoop(OuterLoop):
 
         acquisition_constrained = acquisition * acquisition_constraint
 
-        model_updater_objective = FixedIntervalUpdater(model_objective, update_interval)
-        model_updater_constraint = FixedIntervalUpdater(
-            model_constraint, update_interval, lambda state: state.Y_constraint
-        )
+        model_updater_objective = FixedIntervalUpdater(model_objective, update_interval, output_name="Y")
+        model_updater_constraint = FixedIntervalUpdater(model_constraint, update_interval, output_name="Y_constraint")
 
         acquisition_optimizer = GradientAcquisitionOptimizer(space)
         if batch_size == 1:
@@ -86,7 +77,11 @@ class UnknownConstraintBayesianOptimizationLoop(OuterLoop):
                 log_acquisition, acquisition_optimizer, model_objective, space, batch_size
             )
 
-        loop_state = create_loop_state(model_objective.X, model_objective.Y, Y_constraint=model_constraint.Y)
+        # The two models may have been initialized at different inputs. Each model is only trained on the
+        # evaluations in which its own output was observed.
+        loop_state = create_loop_state_from_output_data(
+            {"Y": (model_objective.X, model_objective.Y), "Y_constraint": (model_constraint.X, model_constraint.Y)}
+        )
 
         super(UnknownConstraintBayesianOptimizationLoop, self).__init__(
             candidate_point_calculator, [model_updater_objective, model_updater_constraint], loop_state

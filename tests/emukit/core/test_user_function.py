@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -202,3 +202,16 @@ def test_multi_source_function_wrapper_too_few_outputs_outputs_fails():
 
     with pytest.raises(ValueError):
         msfw.evaluate(function_input)
+
+
+def test_user_function_wrapper_nan_output_is_treated_as_missing():
+    # Missing output values returned as NaN must not be misinterpreted as real observations
+    function = lambda x: (2 * x, np.full((x.shape[0], 1), np.nan))
+    function_input = np.array([[1.0], [2.0]])
+    ufw = UserFunctionWrapper(function, extra_output_names=["cost"])
+
+    output = ufw.evaluate(function_input)
+
+    assert output[0].has_output("Y")
+    assert not output[0].has_output("cost")
+    assert output[0].available_outputs == ["Y"]

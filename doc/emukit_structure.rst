@@ -68,8 +68,21 @@ It can be either evaluated by the user or it can be passed into the loop and eva
 Model Updater
 _____________
 The ``ModelUpdater`` class updates the model with new training data after a new point is observed and optimizes any
-hyper-parameters of the model. 
+hyper-parameters of the model.
 It can decide whether hyper-parameters need updating based on some internal logic.
+
+An output of interest, such as the objective, a constraint or the cost of an evaluation, is not necessarily observed
+in every evaluation. The ``LoopState`` stores one ``UserFunctionResult`` per evaluation and keeps missing outputs
+missing: an output may be passed as ``None`` or as ``NaN``, and is never zero-filled. ``LoopState.output_view(name)``
+returns an ``OutputView`` with the inputs and targets of the evaluations in which that output was observed, aligned
+by evaluation, together with a mask over the full history and the output dimensionality. ``X`` and ``Y`` of an
+``OutputView`` always have the same number of rows and can be passed directly to a model's ``set_data``.
+
+``FixedIntervalUpdater`` takes an ``output_name`` and trains its model only on the observations of that output. This
+lets the objective model, the constraint model and the cost model each receive their own paired data, even when they
+were initialized at different inputs or when an output is first observed after the loop has started. The
+``create_loop_state_from_output_data`` function builds a loop state from per-output ``(X, Y)`` pairs and merges
+evaluations at identical inputs.
 
 
 Stopping Condition

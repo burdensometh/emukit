@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -7,6 +7,7 @@
 
 import mock
 import numpy as np
+import pytest
 
 from emukit.core import ContinuousParameter, ParameterSpace
 from emukit.core.acquisition import Acquisition
@@ -17,6 +18,7 @@ from emukit.core.loop import (
     LoopState,
     RandomSampling,
     SequentialPointCalculator,
+    UserFunctionResult,
     UserFunctionWrapper,
 )
 from emukit.core.optimization import GradientAcquisitionOptimizer
@@ -146,3 +148,141 @@ def test_user_function_wrapper():
     for res in results:
         assert res.X.ndim == 1, "X results are expected to be 1 dimensional"
         assert res.Y.ndim == 1, "Y results are expected to be 1 dimensional"
+
+
+class _RecordingModel(IModel):
+    """Model that records the data it is updated with"""
+
+    def __init__(self):
+        self._X = None
+        self._Y = None
+        self.optimize_calls = 0
+
+    def predict(self, x):
+        pass
+
+    def set_data(self, X: np.ndarray, Y: np.ndarray):
+        self._X = X
+        self._Y = Y
+
+    def optimize(self):
+        self.optimize_calls += 1
+
+    @property
+    def X(self):
+        return self._X
+
+    @property
+    def Y(self):
+        return self._Y
+
+
+def test_updater_trains_only_on_observations_of_its_output():
+    results = [
+        UserFunctionResult(np.array([1.0]), np.array([10.0]), cost=np.array([1.0])),
+        UserFunctionResult(np.array([2.0]), np.array([20.0]), cost=None),
+        UserFunctionResult(np.array([3.0]), None, cost=np.array([3.0])),
+    ]
+    loop_state = LoopState(results)
+
+    model_objective = _RecordingModel()
+    model_cost = _RecordingModel()
+
+    FixedIntervalUpdater(model_objective, 1, output_name="Y").update(loop_state)
+    FixedIntervalUpdater(model_cost, 1, output_name="cost").update(loop_state)
+
+    # Both X and Y are filtered to the same observations; Y is not filtered against the full X
+    assert np.array_equal(model_objective.X, np.array([[1.0], [2.0]]))
+    assert np.array_equal(model_objective.Y, np.array([[10.0], [20.0]]))
+    assert np.array_equal(model_cost.X, np.array([[1.0], [3.0]]))
+    assert np.array_equal(model_cost.Y, np.array([[1.0], [3.0]]))
+
+
+def test_updater_skips_when_output_not_observed_yet():
+    loop_state = LoopState([UserFunctionResult(np.array([1.0]), np.array([10.0]))])
+
+    model_constraint = _RecordingModel()
+    FixedIntervalUpdater(model_constraint, 1, output_name="Y_constraint").update(loop_state)
+
+    assert model_constraint.X is None
+    assert model_constraint.optimize_calls == 0
+
+
+def test_updater_does_not_train_on_nan_targets():
+    results = [
+        UserFunctionResult(np.array([1.0]), np.array([10.0]), cost=np.array([np.nan])),
+        UserFunctionResult(np.array([2.0]), np.array([20.0]), cost=np.array([2.0])),
+    ]
+    loop_state = LoopState(results)
+
+    model_cost = _RecordingModel()
+    FixedIntervalUpdater(model_cost, 1, output_name="cost").update(loop_state)
+
+    assert np.array_equal(model_cost.X, np.array([[2.0]]))
+    assert np.array_equal(model_cost.Y, np.array([[2.0]]))
+
+
+def test_updater_accepts_extractor_returning_matched_X_and_Y():
+    results = [
+        UserFunctionResult(np.array([1.0]), np.array([10.0]), cost=np.array([1.0])),
+        UserFunctionResult(np.array([2.0]), None, cost=np.array([2.0])),
+    ]
+    loop_state = LoopState(results)
+
+    extracted = loop_state.output_view("cost")
+    model_cost = _RecordingModel()
+    FixedIntervalUpdater(model_cost, 1, lambda state: (extracted.X, extracted.Y)).update(loop_state)
+
+    assert np.array_equal(model_cost.X, np.array([[1.0], [2.0]]))
+    assert np.array_equal(model_cost.Y, np.array([[1.0], [2.0]]))
+
+
+def test_updater_rejects_targets_that_are_not_aligned_with_inputs():
+    results = [
+        UserFunctionResult(np.array([1.0]), np.array([10.0]), cost=np.array([1.0])),
+        UserFunctionResult(np.array([2.0]), np.array([20.0]), cost=np.array([2.0])),
+    ]
+    loop_state = LoopState(results)
+
+    model_cost = _RecordingModel()
+    # Extracting the cost and silently pairing it with all inputs is exactly the failure mode that must be prevented
+    updater = FixedIntervalUpdater(model_cost, 1, lambda state: state.cost[:1])
+
+    with pytest.raises(ValueError):
+        updater.update(loop_state)
+
+
+def test_updater_rejects_nan_targets_from_custom_extractor():
+    results = [
+        UserFunctionResult(np.array([1.0]), np.array([10.0]), cost=np.array([1.0])),
+        UserFunctionResult(np.array([2.0]), np.array([20.0]), cost=np.array([np.nan])),
+    ]
+    loop_state = LoopState(results)
+
+    model_cost = _RecordingModel()
+    updater = FixedIntervalUpdater(model_cost, 1, lambda state: state.cost)
+
+    with pytest.raises(ValueError):
+        updater.update(loop_state)
+    assert model_cost.X is None
+
+
+def test_updater_only_updates_the_model_whose_output_is_observed():
+    loop_state = LoopState(
+        [
+            UserFunctionResult(np.array([1.0]), np.array([10.0]), Y_constraint=np.array([-1.0])),
+            UserFunctionResult(np.array([2.0]), np.array([20.0]), Y_constraint=np.array([1.0])),
+        ]
+    )
+    model_objective = _RecordingModel()
+    model_constraint = _RecordingModel()
+
+    # A late result supplies only the objective
+    loop_state.update([UserFunctionResult(np.array([3.0]), np.array([30.0]))])
+
+    FixedIntervalUpdater(model_objective, 1, output_name="Y").update(loop_state)
+    FixedIntervalUpdater(model_constraint, 1, output_name="Y_constraint").update(loop_state)
+
+    assert np.array_equal(model_objective.Y, np.array([[10.0], [20.0], [30.0]]))
+    assert np.array_equal(model_constraint.Y, np.array([[-1.0], [1.0]]))
+    assert model_constraint.optimize_calls == 1

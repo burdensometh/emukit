@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -62,7 +62,11 @@ class MinimumObservedValueMetric(Metric):
         :param loop: Outer loop
         :param loop_state: Object containing history of the loop that we add results to
         """
-        y_min = np.min(loop_state.Y, axis=0)
+        view = loop_state.output_view("Y", allow_missing=True)
+        if view.n_observations == 0:
+            return np.full((1,), np.nan)
+        # Missing objective values are excluded rather than treated as zero
+        y_min = np.min(view.Y, axis=0)
         return y_min
 
 
@@ -114,9 +118,12 @@ class CumulativeCostMetric(Metric):
 
         :return cumulative cost
         """
-        if loop_state.cost[-1] is not None:
-            self.cumulative_costs += np.cumsum(loop_state.cost[self.last_observed_iter :])[-1]
-            self.last_observed_iter = loop_state.cost.shape[0]
+        # Only observed costs are accumulated; evaluations whose cost is missing contribute nothing
+        view = loop_state.output_view("cost", allow_missing=True)
+        is_new = view.result_indices >= self.last_observed_iter
+        if np.any(is_new):
+            self.cumulative_costs += np.cumsum(view.Y[is_new], axis=0)[-1]
+        self.last_observed_iter = len(loop_state.results)
 
         return self.cumulative_costs
 

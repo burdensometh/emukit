@@ -1,4 +1,4 @@
-# Copyright 2020-2024 The Emukit Authors. All Rights Reserved.
+# Copyright 2020-2026 The Emukit Authors. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -45,6 +45,10 @@ class UserFunctionWrapper(UserFunction):
         :param extra_output_names: If the function f returns a tuple, the first output should be the value of the
                                    objective, which will be named "Y", names for subsequent outputs should be included
                                    in this list.
+
+        An output that was not measured at a given input can be marked with ``NaN`` in the returned array. Such an
+        entry is treated as missing by :class:`~emukit.core.loop.loop_state.LoopState` and is not used to train any
+        model.
         """
         self.f = f
         self.extra_output_names = [] if extra_output_names is None else extra_output_names
