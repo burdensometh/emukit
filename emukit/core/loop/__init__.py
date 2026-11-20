@@ -10,6 +10,15 @@ from .candidate_point_calculators import (  # noqa: F401
     RandomSampling,
     SequentialPointCalculator,
 )
+from .external_evaluation import (  # noqa: F401
+    ExcludePendingPoints,
+    PendingAwarePointCalculator,
+    PendingObservation,
+    PendingObservationTracker,
+    PendingPenalty,
+    PendingPointStrategy,
+    PendingStatus,
+)
 from .loop_state import LoopState  # noqa: F401
 from .model_updaters import FixedIntervalUpdater, ModelUpdater  # noqa: F401
 from .outer_loop import OuterLoop  # noqa: F401

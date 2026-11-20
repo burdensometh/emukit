@@ -1,6 +1,9 @@
 # Changelog
 All notable changes to Emukit will be documented in this file.
 
+## [Unreleased]
+- Add asynchronous external evaluation mode to `OuterLoop` (`ask`/`tell`/`tell_failure`/`tell_cancelled`): candidate points are claimed with traceable observation ids and tracked through pending, succeeded, failed and cancelled statuses. Reports may arrive out of order; only the first confirmed success enters `LoopState` and triggers a model update, while conflicting or repeated reports are rejected. Pending points never enter `LoopState` as real observations but participate in candidate selection via the new `PendingAwarePointCalculator` (exact exclusion for discrete/categorical spaces or acquisition penalization for continuous spaces).
+
 ## [0.5.1]
 - Use scipy for model free designs (#483)
 - Fix division by 0 warning (#481)

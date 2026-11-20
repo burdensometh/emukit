@@ -23,3 +23,4 @@ Below is a list of tutorial / example notebooks demonstrating Emukit's functiona
     :caption: Extra features
 
     notebooks/Emukit-tutorial-Bayesian-optimization-external-objective-evaluation
+    notebooks/Emukit-tutorial-asynchronous-external-evaluation

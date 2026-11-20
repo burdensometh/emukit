@@ -9,6 +9,11 @@ Submodules
     :undoc-members:
     :show-inheritance:
 
+.. automodule:: emukit.core.loop.external_evaluation
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 .. automodule:: emukit.core.loop.loop_state
     :members:
     :undoc-members:
